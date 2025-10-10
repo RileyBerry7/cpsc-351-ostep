@@ -1,0 +1,19 @@
+# cpsc-351-ostep/.gitignore
+
+# Ignore object files and executables
+*.o
+*.out
+*.exe
+a.out
+
+# Ignore backup and temporary files
+*~
+*.swp
+
+# Ignore OS-generated files
+.DS_Store
+
+# Ignore build directories (if any)
+build/
+bin/
+
