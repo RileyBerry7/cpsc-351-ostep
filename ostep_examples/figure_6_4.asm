@@ -1,47 +1,39 @@
-# Figure 6.4: The xv6 Context Switch Code
+; figure_6_4.asm
 
-# void swtch(struct context *old, struct context *new);
-#
-# Save current register context in old
-# and then load register context from new.
+; void swtch(struct context *old, struct context *new);
+; Save current context in *old, then load *new.
+; Works on x86-64 Linux with NASM.
 
-.globl swtch
+section .text
+global swtch
+
 swtch:
+    ; On entry:
+    ;   rdi = pointer to old context
+    ;   rsi = pointer to new context
+    ;
+    ; System V ABI passes first two args in rdi, rsi
 
-# Save old registers
-movl 4(%esp), %eax
+    ; -------------------------------------------------
+    ; Save old context
+    mov     [rdi + 0],  rsp      ; save stack pointer
+    mov     [rdi + 8],  rbx
+    mov     [rdi + 16], rbp
+    mov     [rdi + 24], r12
+    mov     [rdi + 32], r13
+    mov     [rdi + 40], r14
+    mov     [rdi + 48], r15
+    ; Note: RIP can’t be read directly; caller saves it.
 
-# put old ptr into eax
-popl 0(%eax)
+    ; -------------------------------------------------
+    ; Load new context
+    mov     rsp, [rsi + 0]
+    mov     rbx, [rsi + 8]
+    mov     rbp, [rsi + 16]
+    mov     r12, [rsi + 24]
+    mov     r13, [rsi + 32]
+    mov     r14, [rsi + 40]
+    mov     r15, [rsi + 48]
 
-# save the old IP
-movl %esp, 4(%eax)
+    ret     ; return to saved RIP (caller sets it up)
 
-# and stack
-movl %ebx, 8(%eax)
-
-# and other registers
-movl %ecx, 12(%eax)
-movl %edx, 16(%eax)
-movl %esi, 20(%eax)
-movl %edi, 24(%eax)
-movl %ebp, 28(%eax)
-
-# Load new registers
-movl 4(%esp), %eax
-
-# put new ptr into eax
-movl 28(%eax), %ebp # restore other registers
-movl 24(%eax), %edi
-movl 20(%eax), %esi
-movl 16(%eax), %edx
-movl 12(%eax), %ecx
-movl 8(%eax), %ebx
-movl 4(%eax), %esp
-
-# stack is switched here
-pushl 0(%eax)
-
-# return addr put in place
-ret
-# finally return into new context
