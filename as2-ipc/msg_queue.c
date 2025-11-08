@@ -29,17 +29,20 @@
 //       Programs using the POSIX message queue API must be compiled with
 //       cc -lrt to link against the real-time library, librt.
 
-#include <sdtio.h>
+#include <stdio.h>
 #include <string.h>
 
 int main(int argc, char *argv[]){
-	if (strcmp(argv[0], "rcvr")) {
-		printf("Ready to receive./n");
+
+	if (!strcmp(argv[0], "./rcvr")) {
+		printf("Ready to receive.\n");
 	} 
-	else if (strcmp(argv[0], "sndr")) {
-		printf("Ready to send./n");
+	else if (!strcmp(argv[0], "./sndr")) {
+		printf("Ready to send.\n");
+	}
+	else {
+		printf("Error: argv[0] not recognized"); 
 	}
 	
-
 	return 0;
 }
