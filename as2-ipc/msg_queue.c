@@ -49,12 +49,29 @@ struct mq_attr attributes = {
 	.mq_msgsize = sizeof(Message) // 4096 bytes
 };
 
+// Signal Event
+struct sigevent sev = {
+	.sigev_notify = SIGEV_SIGNAL,
+	.sigev_signo  = SIGUSR1,
+};
+
+
 /**** MAIN ************************+****/
 int main(int argc, char *argv[]) {
 	
+
+	// Signal Action
+	struct sigaction sa = {
+		.sa_handler = handler,
+		.sa_flags   = 0,
+		sigemptyset(&sa.sa_mask),
+		sigaction(SIGUSR1, &sa, NULL)
+	};
+
 	int    ret;
 	int    oflags;
 	mode_t mode;
+	mqd_t  mq;
 	
 	// ---------- RECIEVER ----------
 	if (!strcmp(argv[0], "./rcvr")) {
@@ -64,39 +81,26 @@ int main(int argc, char *argv[]) {
 		mode   = S_IRUSR | S_IWUSR;
 
 		// 2. Create/Open Queue
-		mqd_t mq = mq_open(MQ_NAME, oflags, mode, &attributes);
+		mq = mq_open(MQ_NAME, oflags, mode, &attributes);
 		if (mq == (mqd_t)-1) {
 			perror("mq_open");
 			exit(EXIT_FAILURE);
 		}
 		
-		// 3. Block until msg queue is non-empty	
-		getchar();
-		struct sigevent not;
-		
-		// Setup signal handler
-		struct sigaction sa;
-		sa.sa_handler = handler;
-		sa.sa_flags   = 0;
-		sigemptyset(&sa.sa_mas);
-		sigaction(SIGUSR1, &sa, NULL);
-
 		// Register for notifications
-		struct sigevent sev;
-		sev.sigev_notify = SIGEV_SIGNAL;
-		sev.sigev_signo  = SIGUSR1;
-
 		ret = mq_notify(mq, &sev);
 		if (ret == -1) {
 			perror("mq_notify");
-			exit(EXIT_FAILURE)
+			exit(EXIT_FAILURE);
 		}
 		
-		// Receiver will wait for a notification
-		printf("Waiting for message.")
+		// 3. Receiver will wait for a notification
+		printf("Waiting for notification...\n");
 		while (1)
 			pause();
-
+		
+		mq_close(mq);
+		mq_unlink(MQ_NAME); //
 
 	// ---------- SENDER ----------
 	} else if (!strcmp(argv[0], "./sndr")) {
@@ -106,7 +110,7 @@ int main(int argc, char *argv[]) {
 		mode   = S_IRUSR | S_IWUSR;
 
 		// Create/Open Queue
-		mqd_t mq = mq_open(MQ_NAME, oflags, mode, &attributes);
+		mq = mq_open(MQ_NAME, oflags, mode, &attributes);
 		if (mq == (mqd_t)-1) {
 			perror("mq_open");
 			exit(1);
@@ -118,55 +122,48 @@ int main(int argc, char *argv[]) {
 		mq_send(mq, (char *)&outgoing, sizeof(outgoing), 1);
 
 		mq_close(mq);
-		mq_unlink(MQ_NAME); //
 
 	}
 
-	printf("Exiting {}\n", argv[0]);
+	printf("Exiting %s\n", argv[0]);
 	return 0;
 }
 
 
 /****** SIGNAL HANDLER **###**********************+****/
 void handler(int sig) {
-	char *incoming;
-	ssize_t n; // bytes received
 
-	// Re-subscribe for notifcation
-	struct sigevent sev {
-		.sigev_notify = SIGEV_SIGNAL;
-		.sigev_signo  = SIGUSR1;
+	Message  incoming;
+	int      ret;
+	mqd_t    mq;
+	int      oflags = O_CREAT | O_RDONLY;
+	mode_t   mode   = S_IRUSR | S_IWUSR;
+
+	// Open Queue
+	mq = mq_open(MQ_NAME, oflags, mode, &attributes);
+
+	// Re-register for notifcation
+	ret = mq_notify(mq, &sev);
+
+	// 4. Recieve Message & Check it's length
+	ret = mq_receive(mq, (char *)&incoming, sizeof(incoming), NULL);
+	if (ret == -1) {
+	    perror("mq_receive");
+	    exit(EXIT_FAILURE);
 	}
 
-	ret = mq_notify(mq, &sev);
-	incoming = malloc(sizeof(Message));
+	// Write message to file
 
-	// Receive Message
-	n   = mq_receive(mq, buf, attr.mq_msgsize, NULL);
-
-// 4. Recieve Message & Check it's length
-		ret = mq_receive(mq, (char *)&incoming, sizeof(incoming), NULL);
-		if (ret == -1) {
-		    perror("mq_receive");
-		    exit(EXIT_FAILURE);
-		}
-
-		// Write message to file
-
-		// Exit on empty message
+	// Exit on empty message
 		
-		printf("Recieved: %s\n", incoming.msg);
-		
-		mq_close(mq);
 		
 	// Handle Message
-	if (n >= 0) {
-		print("Message Received.\n");
+	if (ret >= 0) {
+		printf("Recieved: %s\n", incoming.msg);
 	}
 
-	free(buf);
-
-	printf("Exiting Signal Handler.\n")
+	mq_close(mq);
+	printf("Exiting Signal Handler.\n");
 }
 
 
