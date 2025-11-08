@@ -10,7 +10,8 @@
 // mq_close(queue_id);
 // mq_unlink(queue_id);
 // mq_getattr();
-// mq_notify();
+// mq_notify();  - Allows the calling process to register or unregister for delivery of an asynchronous notification 
+//		   when a new message arrives on the empty message queue referred to by the message queue descriptor mqdes.
 //
 // A 'message queue descriptor' is a reference to an open message queue descriptio.
 // After a fork(), children inherity copies of mqd_t of the parent.
@@ -23,6 +24,7 @@
 #include <fcntl.h>
 #include <mqueue.h>
 #include <sys/stat.h>
+#include <signal.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,25 +32,30 @@
 
 #define MQ_NAME "/cpsc351queue"
 
-// Message Definition
+// Message Struct
 typedef struct {
 	char msg[80];
 } Message;
 
+// Signal Handler Function
+void handler(int sig);
+
+
+// Queue Attributes
+struct mq_attr attributes = {
+	.mq_flags = 0, 
+	.mq_maxmsg = 10,
+	.mq_curmsgs = 0,
+	.mq_msgsize = sizeof(Message) // 4096 bytes
+};
+
+/**** MAIN ************************+****/
 int main(int argc, char *argv[]) {
 	
 	int    ret;
 	int    oflags;
-	mode_t mode;;
+	mode_t mode;
 	
-	// Queue Setup
-	struct mq_attr attributes = {
-		.mq_flags = 0, 
-		.mq_maxmsg = 10,
-		.mq_curmsgs = 0,
-		.mq_msgsize = sizeof(Message) // 4096 bytes
-	};
-
 	// ---------- RECIEVER ----------
 	if (!strcmp(argv[0], "./rcvr")) {
 
@@ -56,29 +63,41 @@ int main(int argc, char *argv[]) {
 		oflags = O_CREAT | O_RDONLY;
 		mode   = S_IRUSR | S_IWUSR;
 
-		// Create/Open Queue
+		// 2. Create/Open Queue
 		mqd_t mq = mq_open(MQ_NAME, oflags, mode, &attributes);
 		if (mq == (mqd_t)-1) {
 			perror("mq_open");
-			exit(1);
+			exit(EXIT_FAILURE);
 		}
 		
+		// 3. Block until msg queue is non-empty	
 		getchar();
+		struct sigevent not;
+		
+		// Setup signal handler
+		struct sigaction sa;
+		sa.sa_handler = handler;
+		sa.sa_flags   = 0;
+		sigemptyset(&sa.sa_mas);
+		sigaction(SIGUSR1, &sa, NULL);
 
-		// Recieve Message
-		Message incoming;
-		ret = mq_receive(mq, (char *)&incoming, sizeof(incoming), NULL);
+		// Register for notifications
+		struct sigevent sev;
+		sev.sigev_notify = SIGEV_SIGNAL;
+		sev.sigev_signo  = SIGUSR1;
+
+		ret = mq_notify(mq, &sev);
 		if (ret == -1) {
-		    perror("mq_receive");
-		    exit(1);
+			perror("mq_notify");
+			exit(EXIT_FAILURE)
 		}
 		
-		printf("Recieved: %s\n", incoming.msg);
-		
-		mq_close(mq);
-		
-		printf("Reciever Exiting.\n");
-			 
+		// Receiver will wait for a notification
+		printf("Waiting for message.")
+		while (1)
+			pause();
+
+
 	// ---------- SENDER ----------
 	} else if (!strcmp(argv[0], "./sndr")) {
 
@@ -101,10 +120,57 @@ int main(int argc, char *argv[]) {
 		mq_close(mq);
 		mq_unlink(MQ_NAME); //
 
-		printf("Sender Exiting.\n");
 	}
+
+	printf("Exiting {}\n", argv[0]);
 	return 0;
 }
+
+
+/****** SIGNAL HANDLER **###**********************+****/
+void handler(int sig) {
+	char *incoming;
+	ssize_t n; // bytes received
+
+	// Re-subscribe for notifcation
+	struct sigevent sev {
+		.sigev_notify = SIGEV_SIGNAL;
+		.sigev_signo  = SIGUSR1;
+	}
+
+	ret = mq_notify(mq, &sev);
+	incoming = malloc(sizeof(Message));
+
+	// Receive Message
+	n   = mq_receive(mq, buf, attr.mq_msgsize, NULL);
+
+// 4. Recieve Message & Check it's length
+		ret = mq_receive(mq, (char *)&incoming, sizeof(incoming), NULL);
+		if (ret == -1) {
+		    perror("mq_receive");
+		    exit(EXIT_FAILURE);
+		}
+
+		// Write message to file
+
+		// Exit on empty message
+		
+		printf("Recieved: %s\n", incoming.msg);
+		
+		mq_close(mq);
+		
+	// Handle Message
+	if (n >= 0) {
+		print("Message Received.\n");
+	}
+
+	free(buf);
+
+	printf("Exiting Signal Handler.\n")
+}
+
+
+
 
 // ___Notes From The Man Page___
 // The  fields  of the struct mq_attr pointed to attr specify the maximum number of messages and the maximum size of messages
