@@ -33,7 +33,8 @@
 
 #define MQ_NAME "/cpsc351queue"
 
-static volatile sig_atomic_t notified = 0;   // FIX: will be set to 1 in handler
+static volatile sig_atomic_t notified = 0; //FIX: will be set to 1 in handler
+
 
 // Message Struct
 typedef struct {
@@ -87,16 +88,16 @@ int main(int argc, char *argv[]) {
     // ---------- RECIEVER ----------
     if (!strcmp(argv[0], "./rcvr")) {
 
+        FILE *filePointer = fopen("file_recv", "w");
+        if (filePointer == NULL) { perror("fopen"); exit(1); }
+
         printf("Ready to receive.\n");
         oflags = O_CREAT | O_RDONLY | O_NONBLOCK;
         mode   = S_IRUSR | S_IWUSR;
 
         // Create/Open Queue
         mq = mq_open(MQ_NAME, oflags, mode, &attributes);
-        if (mq == (mqd_t)-1) {
-            perror("mq_open");
-            exit(1);
-        }
+        if (mq == -1) { perror("mq_open"); exit(1); }
 
         // Notification Loop
         for(;;){
@@ -107,7 +108,14 @@ int main(int argc, char *argv[]) {
             for(;;) {
                 Message incoming;
                 ssize_t n = mq_receive(mq, (char*)&incoming, sizeof(incoming), NULL);
-                if (n >= 0) { printf("Received: %s\n", incoming.msg); continue; }
+                if (n >= 0) { 
+    		    printf("Received: %s\n", incoming.msg);
+		    size_t numElements = strlen(incoming.msg);
+		    fwrite(incoming.msg, sizeof(char), numElements, filePointer);
+		    fwrite("\n", 1, 1, filePointer);  // optional, for readability
+		    fflush(filePointer);               // <--- force write to disk
+		    continue; 
+		}
                 if (errno == EAGAIN) break;   // nothing left right now
                 perror("mq_receive");
                 goto out;
@@ -130,6 +138,7 @@ int main(int argc, char *argv[]) {
         // Restore original mask and close
         if (sigprocmask(SIG_SETMASK, &prev, NULL) == -1) { perror("sigprocmask restore"); }
         mq_close(mq);
+	fclose(filePointer);
 
     // ---------- SENDER ----------
     } else if (!strcmp(argv[0], "./sndr")) {
@@ -148,15 +157,15 @@ int main(int argc, char *argv[]) {
         // Send Message
         Message outgoing;
         strcpy(outgoing.msg, "lol");
+
         if (mq_send(mq, (char *)&outgoing, sizeof(outgoing), 1) == -1) {
             perror("mq_send");
         } else {
             printf("Sent.\n");
         }
-
         mq_close(mq);
+    
     }
-
     printf("Exiting %s\n", argv[0]);
     return 0;
 }
