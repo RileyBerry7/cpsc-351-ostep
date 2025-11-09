@@ -31,14 +31,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MQ_NAME "/cpsc351queue"
+#define MQ_NAME  "/cpsc351queue"
+#define MSG_SIZE 4096
 
 static volatile sig_atomic_t notified = 0; //FIX: will be set to 1 in handler
 
 
 // Message Struct
 typedef struct {
-    char msg[80];
+    char msg[MSG_SIZE];
 } Message;
 
 // Queue Attributes
@@ -46,7 +47,7 @@ struct mq_attr attributes = {
     .mq_flags   = 0, 
     .mq_maxmsg  = 10,
     .mq_curmsgs = 0,
-    .mq_msgsize = sizeof(Message) // 4096 bytes
+    .mq_msgsize = sizeof(Message) // ~ 4096 bytes
 };
 
 // Signal Event
@@ -108,7 +109,9 @@ int main(int argc, char *argv[]) {
             for(;;) {
                 Message incoming;
                 ssize_t n = mq_receive(mq, (char*)&incoming, sizeof(incoming), NULL);
-                if (n >= 0) { 
+            if (n == 0) {
+                break;
+            } else if (n > 0) { 
     		    printf("Received: %s\n", incoming.msg);
 		    size_t numElements = strlen(incoming.msg);
 		    fwrite(incoming.msg, sizeof(char), numElements, filePointer);
@@ -142,6 +145,10 @@ int main(int argc, char *argv[]) {
 
     // ---------- SENDER ----------
     } else if (!strcmp(argv[0], "./sndr")) {
+        
+         
+        FILE *filePointer = fopen(argv[1], "r");
+        if (filePointer == NULL) { perror("fopen"); exit(1); }
 
         printf("Ready to send.\n");
         oflags = O_CREAT | O_WRONLY | O_NONBLOCK;
@@ -153,18 +160,26 @@ int main(int argc, char *argv[]) {
             perror("mq_open");
             exit(1);
         }
+        
+        // Read 4096 bytes from file
+        Message outgoing;
+        char c;
+        int  i = 0;
+        while ((c = fgetc(filePointer)) != EOF && i < MSG_SIZE - 1) {
+            outgoing.msg[i++] = (char)c;
+        }
+
+        //fread(buffer, sizeof(char), 4096, filePointer);
 
         // Send Message
-        Message outgoing;
-        strcpy(outgoing.msg, "lol");
-
-        if (mq_send(mq, (char *)&outgoing, sizeof(outgoing), 1) == -1) {
+        if (mq_send(mq, (char *)&outgoing, strlen(outgoing.msg) + 1, 1) == -1) {
             perror("mq_send");
         } else {
             printf("Sent.\n");
         }
+
         mq_close(mq);
-    
+	fclose(filePointer);
     }
     printf("Exiting %s\n", argv[0]);
     return 0;
