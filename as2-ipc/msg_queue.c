@@ -3,21 +3,17 @@
 // CPSC 351 - Assignment 2 (Part II: POSIX Message Queues)
 // -------------------------------------------------------
 // Build:
-//   gcc -Wall -Wextra -O2 msg_queue.c -o msg_queue -lrt
-// Symlinks to match required invocations:
-//   ln -sf msg_queue recv
-//   ln -sf msg_queue sender
+//   ./build_mq.sh
 //
 // Run (two terminals):
 //   ./recv
 //   ./sender file.txt
 //
-// Notes:
-// * Spec says receiver queue name "cpsc351queue". POSIX requires a leading '/':
-//     MQ_NAME = "/cpsc351queue"
-// * Sender must open an existing queue only (no O_CREAT).
-// * Receiver blocks in mq_receive() and exits on a 0-byte message.
-// * Receiver unlinks the queue on clean termination (so future runs start fresh).
+// Requirement Notes:
+//     Sender cannot create a queue, only open an existing one.
+//     Receiver blocks while waiting on notification. 
+//     Reveiver exits on a 0-byte message.
+//     Receiver unlinks the queue at before open & after close. 
 
 #include <errno.h>
 #include <fcntl.h>
@@ -40,11 +36,11 @@
 //                            RECEIVER (./recv)
 // ----------------------------------------------------------------------------
 // Behavior (per spec):
-// 1) Create/open message queue MQ_NAME (10 msgs, 4096 bytes each).
-// 2) Open "file_recv" for writing (truncate).
-// 3) Loop: blocking mq_receive().
-//    - If n > 0: write exactly n bytes to file and continue.
-//    - If n == 0: close file, mq_close, mq_unlink, exit(0).
+// 1. Create/Open queue mq_open() -> (10 msg capacity, 4096 bytes each).
+// 2. Open "file_recv" for writing.
+// 3. Loop: block until mq_receive().
+//    - Write bytes to file
+//    - If 0-byte msg then exit
 // ============================================================================
 static int run_receiver(void) {
     // --- Allocate / open the message queue (creator) ---
@@ -121,20 +117,19 @@ static int run_receiver(void) {
 }
 
 // ============================================================================
-//                            SENDER (./sender <file>)
+//                            SENDER (./sender <file.txt>)
 // ----------------------------------------------------------------------------
 /*
 Behavior (per spec):
-1) Invoked as: ./sender <file name>
-2) Open existing message queue MQ_NAME WITHOUT O_CREAT.
-   - If not present, error and terminate.
-3) Open the input file.
-4) Loop:
-   (a) Read at most 4096 bytes from the file.
-   (b) Send those bytes with priority 1.
-   (c) Repeat until EOF.
-5) Send an empty (0-byte) message with priority 2 to signal completion.
-6) Terminate.
+1. Invoked as: ./sender <file.txt>
+2. Open existing message queue
+3. Open the input file(<file.txt>).
+4. Loop:
+    a. Read at most 4096 bytes from the file.
+    b. Send those bytes with priority 1.
+    c. Repeat until EOF.
+5. Send a 0-byte message with priority 2 to signal completion.
+6. Exit
 */
 static int run_sender(int argc, char **argv) {
     if (argc < 2) {
@@ -193,10 +188,11 @@ static int run_sender(int argc, char **argv) {
 // ============================================================================
 //                                     MAIN
 // ----------------------------------------------------------------------------
-// We dispatch based on argv[0] so the single binary can act as ./recv or ./sender.
-// Create symlinks:
-//   ln -sf msg_queue recv
-//   ln -sf msg_queue sender
+// Control is passed to the respective function dertermined by argv[0] which 
+// is the arg storing the invoking command: ./recv or ./sender
+//
+// Both names are symlinks(aliases) to the compiled program: msg_queue
+// Read the bash script (build_mq.sh) if you want to know more.
 // ============================================================================
 static const char *basename_ptr(const char *p) {
     const char *slash = strrchr(p, '/');
