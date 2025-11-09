@@ -1,199 +1,223 @@
 // msg_queue.c
-
-// Use: open(), read(), write() syscalls
-
-// Create Msg Queue: mq_open(queue_id);
-//  -> returns: mqd_t 'msg queue descriptor' used to refer msg queue
-// Queue Identifier:  '/queue_name'
-// Produce: mq_send();
-// Consume: mq_receive();
-// mq_close(queue_id);
-// mq_unlink(queue_id);
-// mq_getattr();
-// mq_notify();  - Allows the calling process to register or unregister for delivery of an asynchronous notification 
-//                 when a new message arrives on the empty message queue referred to by the message queue descriptor mqdes.
 //
-// A 'message queue descriptor' is a reference to an open message queue descriptio.
-// After a fork(), children inherity copies of mqd_t of the parent.
-// Copied mqd_t will share the flags (mq_flags) that are associated with that mqd_t.
+// CPSC 351 - Assignment 2 (Part II: POSIX Message Queues)
+// -------------------------------------------------------
+// Build:
+//   gcc -Wall -Wextra -O2 msg_queue.c -o msg_queue -lrt
+// Symlinks to match required invocations:
+//   ln -sf msg_queue recv
+//   ln -sf msg_queue sender
+//
+// Run (two terminals):
+//   ./recv
+//   ./sender file.txt
+//
+// Notes:
+// * Spec says receiver queue name "cpsc351queue". POSIX requires a leading '/':
+//     MQ_NAME = "/cpsc351queue"
+// * Sender must open an existing queue only (no O_CREAT).
+// * Receiver blocks in mq_receive() and exits on a 0-byte message.
+// * Receiver unlinks the queue on clean termination (so future runs start fresh).
 
-//   Linking
-//       Programs using the POSIX message queue API must be compiled with
-//       cc -lrt to link against the real-time library, librt.
-
+#include <errno.h>
 #include <fcntl.h>
 #include <mqueue.h>
-#include <sys/stat.h>
 #include <signal.h>
-#include <errno.h>
-#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
-#define MQ_NAME  "/cpsc351queue"
-#define MSG_SIZE 4096
+// ============================================================================
+//                                CONFIGURATION
+// ============================================================================
+#define MQ_NAME   "/cpsc351queue"   // POSIX name (must start with '/')
+#define MSG_SIZE  4096              // max message size (bytes)
+#define MAX_MSGS  10                // max messages buffered in queue
 
-static volatile sig_atomic_t notified = 0; //FIX: will be set to 1 in handler
+// ============================================================================
+//                            RECEIVER (./recv)
+// ----------------------------------------------------------------------------
+// Behavior (per spec):
+// 1) Create/open message queue MQ_NAME (10 msgs, 4096 bytes each).
+// 2) Open "file_recv" for writing (truncate).
+// 3) Loop: blocking mq_receive().
+//    - If n > 0: write exactly n bytes to file and continue.
+//    - If n == 0: close file, mq_close, mq_unlink, exit(0).
+// ============================================================================
+static int run_receiver(void) {
+    // --- Allocate / open the message queue (creator) ---
+    struct mq_attr attr = {
+        .mq_flags   = 0,        // blocking
+        .mq_maxmsg  = MAX_MSGS,
+        .mq_msgsize = MSG_SIZE,
+        .mq_curmsgs = 0
+    };
+    
+    // Dump any exisitng queue
+    mq_unlink(MQ_NAME);  
 
-
-// Message Struct
-typedef struct {
-    char msg[MSG_SIZE];
-} Message;
-
-// Queue Attributes
-struct mq_attr attributes = {
-    .mq_flags   = 0, 
-    .mq_maxmsg  = 10,
-    .mq_curmsgs = 0,
-    .mq_msgsize = sizeof(Message) // ~ 4096 bytes
-};
-
-// Signal Event
-struct sigevent sev = {
-    .sigev_notify = SIGEV_SIGNAL,
-    .sigev_signo  = SIGUSR1,
-    .sigev_value.sival_int = 0
-};
-
-/****** SIGNAL HANDLER *******************************************/
-static void handler(int sig){
-    (void)sig;
-    notified = 1;           // FIX: set (not clear) the notification flag
-}
-
-/**** MAIN ********************************************************/
-int main(int argc, char *argv[]) {
-    int    ret;
-    int    oflags;
-    mode_t mode;
-    mqd_t  mq;
-
-    // Signal Action
-    sigset_t block, prev, waitmask;
-    sigemptyset(&block);
-    sigaddset(&block, SIGUSR1);
-
-    // Block SIGUSR1 before arming mq_notify (canonical pattern)
-    if (sigprocmask(SIG_BLOCK, &block, &prev) == -1) { perror("sigprocmask"); exit(1); }
-
-    // FIX: install SIGUSR1 handler
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = handler;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0; // SA_RESTART optional; not needed for sigsuspend
-    if (sigaction(SIGUSR1, &sa, NULL) == -1) { perror("sigaction"); exit(1); }
-
-    // ---------- RECIEVER ----------
-    if (!strcmp(argv[0], "./rcvr")) {
-
-        FILE *filePointer = fopen("file_recv", "w");
-        if (filePointer == NULL) { perror("fopen"); exit(1); }
-
-        printf("Ready to receive.\n");
-        oflags = O_CREAT | O_RDONLY | O_NONBLOCK;
-        mode   = S_IRUSR | S_IWUSR;
-
-        // Create/Open Queue
-        mq = mq_open(MQ_NAME, oflags, mode, &attributes);
-        if (mq == -1) { perror("mq_open"); exit(1); }
-
-        // Notification Loop
-        for(;;){
-            // Register for notifications (one-shot). If someone else armed it, EBUSY is fine.
-            if (mq_notify(mq, &sev) == -1 && errno != EBUSY) { perror("mq_notify"); break; }
-
-            // Receive Loop: drain anything currently in the queue
-            for(;;) {
-                Message incoming;
-                ssize_t n = mq_receive(mq, (char*)&incoming, sizeof(incoming), NULL);
-            if (n == 0) {
-                break;
-            } else if (n > 0) { 
-    		    printf("Received: %s\n", incoming.msg);
-		    size_t numElements = strlen(incoming.msg);
-		    fwrite(incoming.msg, sizeof(char), numElements, filePointer);
-		    fwrite("\n", 1, 1, filePointer);  // optional, for readability
-		    fflush(filePointer);               // <--- force write to disk
-		    continue; 
-		}
-                if (errno == EAGAIN) break;   // nothing left right now
-                perror("mq_receive");
-                goto out;
-            }
-
-            // Wait for next notification
-            notified = 0;
-
-            // FIX: wait mask = previous mask but with SIGUSR1 unblocked during sigsuspend()
-            waitmask = prev;
-            sigdelset(&waitmask, SIGUSR1);
-
-            while (!notified) {
-                errno = 0;
-                sigsuspend(&waitmask);        // wakes with EINTR on SIGUSR1
-                if (errno != EINTR && errno != 0) { perror("sigsuspend"); }
-            }
-        }
-    out:
-        // Restore original mask and close
-        if (sigprocmask(SIG_SETMASK, &prev, NULL) == -1) { perror("sigprocmask restore"); }
-        mq_close(mq);
-	fclose(filePointer);
-
-    // ---------- SENDER ----------
-    } else if (!strcmp(argv[0], "./sndr")) {
-        
-         
-        FILE *filePointer = fopen(argv[1], "r");
-        if (filePointer == NULL) { perror("fopen"); exit(1); }
-
-        printf("Ready to send.\n");
-        oflags = O_CREAT | O_WRONLY | O_NONBLOCK;
-        mode   = S_IRUSR | S_IWUSR;
-
-        // Create/Open Queue
-        mq = mq_open(MQ_NAME, oflags, mode, &attributes);
-        if (mq == (mqd_t)-1) {
-            perror("mq_open");
-            exit(1);
-        }
-        
-        // Read 4096 bytes from file
-        Message outgoing;
-        char c;
-        int  i = 0;
-        while ((c = fgetc(filePointer)) != EOF && i < MSG_SIZE - 1) {
-            outgoing.msg[i++] = (char)c;
-        }
-
-        //fread(buffer, sizeof(char), 4096, filePointer);
-
-        // Send Message
-        if (mq_send(mq, (char *)&outgoing, strlen(outgoing.msg) + 1, 1) == -1) {
-            perror("mq_send");
-        } else {
-            printf("Sent.\n");
-        }
-
-        mq_close(mq);
-	fclose(filePointer);
+    // Open with O_CREAT | O_RDONLY to be the creating side and specify attrs.
+    mqd_t mq = mq_open(MQ_NAME, O_CREAT | O_RDONLY, S_IRUSR | S_IWUSR, &attr);
+    if (mq == (mqd_t)-1) {
+        perror("mq_open (receiver)");
+        return 1;
     }
-    printf("Exiting %s\n", argv[0]);
+
+    FILE *fp = fopen("file_recv", "wb");
+    if (!fp) {
+        perror("fopen(file_recv)");
+        mq_close(mq);
+        mq_unlink(MQ_NAME);
+        return 1;
+    }
+
+    printf("Receiver ready. Waiting for messages on %s ...\n", MQ_NAME);
+
+    // Fixed-size receive buffer; mq_receive() guarantees n <= MSG_SIZE.
+    char    buf[MSG_SIZE];
+    unsigned prio = 0;
+
+    for (;;) {
+        ssize_t n = mq_receive(mq, buf, sizeof(buf), &prio);
+        if (n < 0) {
+            // Interrupted by signal? Just retry. Otherwise, fatal.
+            if (errno == EINTR) continue;
+            perror("mq_receive");
+            break;
+        }
+
+        if (n == 0) {
+            // Terminator per spec (priority 2 recommended by spec, but size==0 is the key)
+            printf("Receiver: terminator received (prio=%u). Closing.\n", prio);
+            break;
+        }
+
+        // Optional: preview to console (safe NUL cap for printing)
+        size_t preview = (size_t)n < (MSG_SIZE - 1) ? (size_t)n : (MSG_SIZE - 1);
+        buf[preview] = '\0';
+        printf("Receiver: got %zd bytes%s\n", n, (prio ? " (prio set)" : ""));
+
+        // Write exactly n bytes, no extra newline
+        size_t wrote = fwrite(buf, 1, (size_t)n, fp);
+        if (wrote != (size_t)n) {
+            perror("fwrite(file_recv)");
+            break;
+        }
+        fflush(fp);
+    }
+
+    // Cleanup
+    fclose(fp);
+    mq_close(mq);
+    // As the creator, unlink so repeated runs start with a clean queue
+    if (mq_unlink(MQ_NAME) == -1) {
+        perror("mq_unlink");
+        // Not fatal
+    }
+
     return 0;
 }
 
-// ___Notes From The Man Page___
-// The  fields  of the struct mq_attr pointed to attr specify the maximum number of messages and the maximum size of messages
-//        that the queue will allow.  This structure is defined as follows:
-//
-//            struct mq_attr {
-//                long mq_flags;       /* Flags (ignored for mq_open()) */
-//                long mq_maxmsg;      /* Max. # of messages on queue */
-//                long mq_msgsize;     /* Max. message size (bytes) */
-//                long mq_curmsgs;     /* # of messages currently in queue
-//                                        (ignored for mq_open()) */
-//            };
+// ============================================================================
+//                            SENDER (./sender <file>)
+// ----------------------------------------------------------------------------
+/*
+Behavior (per spec):
+1) Invoked as: ./sender <file name>
+2) Open existing message queue MQ_NAME WITHOUT O_CREAT.
+   - If not present, error and terminate.
+3) Open the input file.
+4) Loop:
+   (a) Read at most 4096 bytes from the file.
+   (b) Send those bytes with priority 1.
+   (c) Repeat until EOF.
+5) Send an empty (0-byte) message with priority 2 to signal completion.
+6) Terminate.
+*/
+static int run_sender(int argc, char **argv) {
+    if (argc < 2) {
+        fprintf(stderr, "usage: ./sender <file>\n");
+        return 1;
+    }
+
+    const char *path = argv[1];
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        perror("fopen(input)");
+        return 1;
+    }
+
+    // Open existing queue only (do not create here per spec)
+    mqd_t mq = mq_open(MQ_NAME, O_WRONLY);
+    if (mq == (mqd_t)-1) {
+        perror("mq_open (sender) - queue must already exist (start ./recv first)");
+        fclose(fp);
+        return 1;
+    }
+
+    printf("Sender ready. Sending '%s' in chunks up to %d bytes ...\n", path, MSG_SIZE);
+
+    char buf[MSG_SIZE];
+    for (;;) {
+        size_t n = fread(buf, 1, sizeof(buf), fp);
+        if (n == 0) {
+            if (ferror(fp)) {
+                perror("fread");
+            }
+            break; // EOF or error
+        }
+
+        // Blocking send with priority 1
+        if (mq_send(mq, buf, n, 1) == -1) {
+            perror("mq_send (data)");
+            fclose(fp);
+            mq_close(mq);
+            return 1;
+        }
+    }
+
+    // Send terminator: 0-byte with priority 2
+    if (mq_send(mq, "", 0, 2) == -1) {
+        perror("mq_send (terminator)");
+        // continue cleanup anyway
+    }
+
+    fclose(fp);
+    mq_close(mq);
+    printf("Sender done.\n");
+    return 0;
+}
+
+// ============================================================================
+//                                     MAIN
+// ----------------------------------------------------------------------------
+// We dispatch based on argv[0] so the single binary can act as ./recv or ./sender.
+// Create symlinks:
+//   ln -sf msg_queue recv
+//   ln -sf msg_queue sender
+// ============================================================================
+static const char *basename_ptr(const char *p) {
+    const char *slash = strrchr(p, '/');
+    return slash ? (slash + 1) : p;
+}
+
+int main(int argc, char **argv) {
+    const char *who = basename_ptr(argv[0]);
+
+    if (strcmp(who, "recv") == 0 || strcmp(who, "./recv") == 0) {
+        return run_receiver();
+    }
+    if (strcmp(who, "sender") == 0 || strcmp(who, "./sender") == 0) {
+        return run_sender(argc, argv);
+    }
+
+    // Friendly fallback if run directly:
+    fprintf(stderr,
+            "Usage:\n"
+            "  ./recv                (create queue, block, write to file_recv, exit on 0-byte msg)\n"
+            "  ./sender <file>       (open existing queue, send chunks, send 0-byte terminator)\n");
+    return 1;
+}
 
