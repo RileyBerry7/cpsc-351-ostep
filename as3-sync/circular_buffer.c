@@ -12,28 +12,50 @@ int main(int argc, char argv[]){
     int counter = 0;
     int in      = 0;
     int out     = 0;
+    char header[100] = " --- Welcome to my Circular Buffer ---";
     
-    // Producer Function
-    void produce(item **arr, int size, int *in){
-
-        item *new_item = malloc(sizeof(item));
-        new_item->index = *in;
-        arr[*in]    = new_item;
-        printf("Produced index: %d\n", new_item->index);
-        (*in)++;
+    int get_next(int index, int size){
+        if (index+1 < size){
+            return index+1;
+        } else {
+            return 0;
+        }
     }
 
+    // Producer Function
+    const char* produce(item **arr, int size, int *in){
+            
+        static char buf1[100];
+
+        if (arr[*in] == NULL) {
+            item *new_item = malloc(sizeof(item));
+            new_item->index = *in;
+            arr[*in]    = new_item;
+            *in = get_next(*in, size);
+
+            sprintf(buf1, "Produced index: %d", new_item->index);
+        
+        } else {
+            sprintf(buf1, "Cannot produce.(Buffer is full)");
+        }
+        return buf1;
+    }   
+
     // Consumer Function
-    void consume(item **arr, int size, int *out){
+    const char* consume(item **arr, int size, int *out){
+
+        static char buf2[100];
+        
         if (arr[*out] != NULL) {
             item *old_item = arr[*out];
             arr[*out] = NULL;
-            printf("Consumed index: %d\n", old_item->index);
-            (*out)++;
+            sprintf(buf2,"Consumed index: %d", old_item->index);
+            *out = get_next(*out, size);
             free(old_item);
         } else {
-            printf("Nothing to consume.\n");
+            sprintf(buf2, "Nothing to consume.(Buffer is empty)");
         } 
+        return buf2;
     }
 
     // Draw Buffer Function
@@ -53,6 +75,7 @@ int main(int argc, char argv[]){
     while (strcmp(input, "x") != 0){
         
         system("clear");
+        printf("%s\n\n", header);
         draw_buffer(buffer, BUFFER_SIZE);
         strcpy(input, "r");
         printf("\n\n\t[c] Consume\n\t[p] Produce\n\t[x] Exit\n");
@@ -61,15 +84,15 @@ int main(int argc, char argv[]){
 
         // Produce Action
         if (strcmp(input, "p") == 0) {
-            produce(buffer, BUFFER_SIZE, &in);
+            strcpy(header, produce(buffer, BUFFER_SIZE, &in));
 
         // Consume Action
         } else if (strcmp(input, "c") == 0) {
-            consume(buffer, BUFFER_SIZE, &out);
+            strcpy(header, consume(buffer, BUFFER_SIZE, &out));
         }
     }
 
-
-
     return 0;
 }
+
+
