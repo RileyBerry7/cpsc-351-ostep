@@ -5,9 +5,9 @@
 ; Works on x86-64 Linux with NASM.
 
 section .text
-global swtch
+global context_switch 
 
-swtch:
+context_switch:
     ; On entry:
     ;   rdi = pointer to old context
     ;   rsi = pointer to new context
@@ -37,3 +37,6 @@ swtch:
 
     ret     ; return to saved RIP (caller sets it up)
 
+
+; mark stack as non-executable (recommended)
+section .note.GNU-stack noalloc noexec nowrite progbits

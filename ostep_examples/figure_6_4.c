@@ -10,65 +10,60 @@
 #include <stdio.h>
 #include <stdint.h>
 
-// -------------------------------------------------------------
-// This structure must match what figure_6_4.asm saves/restores.
-// Only callee-saved registers are switched (System V ABI).
-// -------------------------------------------------------------
+// -------------------------------------------------------------------------------------------
+// Struct: Context - contains process 'context' (GPRs, Stack Ptr, Program Counter)
+// -------------------------------------------------------------------------------------------
 struct context {
+
     uint64_t rsp;   // Stack pointer
     uint64_t rbx;   // Callee-saved registers
     uint64_t rbp;
-    uint64_t r12;
+    uint64_t r12;   // uint64_t = fixed-width 64-bit integers
     uint64_t r13;
     uint64_t r14;
     uint64_t r15;
 };
 
-// The assembly routine provided in figure_6_4.asm
-extern void swtch(struct context *old, struct context *new);
 
-// Two separate register/stack contexts
-static struct context main_ctx;
-static struct context thread_ctx;
+// Declares assembly routine from .asm
+extern void context_switch(struct context *old, struct context *new);
 
-// A private stack for our fake "thread"
-static uint8_t thread_stack[1024];
+static struct context curr_ctx;    // old context
+static struct context next_ctx;    // new context
+static uint8_t next_stack[1024]; // private stack for 'process 2' 
 
-// -------------------------------------------------------------
-// The function our "thread" will run once switched to.
-// -------------------------------------------------------------
-void thread_func(void) {
-    printf("→ Now running inside thread_func\n");
+void process_2(void) {
+    
+    printf("\nProcess 2:\n");
+    printf(" ...\n");
 
     // Switch back to main (saves current, restores main)
-    swtch(&thread_ctx, &main_ctx);
+    context_switch(&next_ctx, &curr_ctx);
 
-    // If control ever returns here (it won’t), print message
-    printf("→ Returned to thread_func (unexpected)\n");
+    // ---- Unreachable ----
+    printf("[UNEXPECTED]\n");
 }
 
 // -------------------------------------------------------------
 // Program entry point
 // -------------------------------------------------------------
 int main(void) {
-    printf("Starting in main()\n");
+    
+    uint64_t *stack_ptr;
 
-    // ---------------------------------------------------------
-    // Prepare thread_ctx so that when swtch() returns into it,
-    // the CPU "ret" will jump to thread_func().
-    // ---------------------------------------------------------
-    uint64_t *sp = (uint64_t *)(thread_stack + sizeof(thread_stack));
-    *(--sp) = (uint64_t)thread_func;   // Fake return address for "ret"
-    thread_ctx.rsp = (uint64_t)sp;     // Set stack pointer for thread
+    printf("\nProcess 1:\n");
+    printf("  setting up stack p2 stack\n");
 
-    // ---------------------------------------------------------
-    // Save current registers into main_ctx and load thread_ctx.
-    // This transfers control to thread_func().
-    // ---------------------------------------------------------
-    swtch(&main_ctx, &thread_ctx);
-
+    stack_ptr = (uint64_t *)(next_stack + sizeof(next_stack)); 
+    *(--stack_ptr) = (uint64_t)process_2;   // Fake return address for "ret"
+    next_ctx.rsp = (uint64_t)stack_ptr;     // Set stack pointer for thread
+    
+    printf("  performing context switch\n");
+    context_switch(&curr_ctx, &next_ctx); // swap contexts (transfers control to thread_func)
+    
     // When thread_func calls swtch() back, execution resumes here.
-    printf("Back in main() after returning from thread_func\n");
+    printf("\nProcess 1:\n");
+    printf("  ...\n");
 
     return 0;
 }
