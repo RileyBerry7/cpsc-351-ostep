@@ -6,7 +6,8 @@
 int main(int argc, char *argv[]) {
     printf("Hello Semaphores!\n");
     
-    wait(s){
+    // wait
+    sem_lock(s){
         while (s <= 0) ; // busy wait
         s--;
     }
