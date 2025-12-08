@@ -41,6 +41,9 @@ void wake_up();
 int  sem_wait(semaphore* s);
 int  sem_post(semaphore* s);
 
+//======================== CONFIGURATION =======================================
+#define RESOURCES 2
+
 
 //==============================================================================
 //                                      MAIN
@@ -55,11 +58,11 @@ int main(int argc, char *argv[]) {
     attr.mq_curmsgs = 0;    // Current number of messages (set to 0 initially)
     
     printf("Hello world!\n");
-    semaphore my_s = {10, {NULL}, 0};
+    semaphore my_s = {RESOURCES, {NULL}, 0};
     
     // Fork 3 Children
     for (int i = 0; i < 3; i++) {
-        printf("[Child %d] Created\n", i+1);
+        printf("[CHILD %d] Created\n", i+1);
         pid_t pid = fork();
         if (pid < 0) {
             perror("fork");
@@ -71,7 +74,9 @@ int main(int argc, char *argv[]) {
         // ============================
         if (pid == 0 && i == 0) {
             //printf("[CHILD 1] PID=%d, Parent=%d\n", getpid(), getppid());
-            //
+            sem_wait(&my_s);
+            printf("[CHILD 1] Waiting 10 Sedonds...\n");
+            sleep(10);
             exit(0);
         }
 
@@ -79,7 +84,9 @@ int main(int argc, char *argv[]) {
         // CHILD 2
         // ============================
         if (pid == 0 && i == 1) {
-            //printf("[CHILD 2] PID=%d, Parent=%d\n", getpid(), getppid());
+            sem_wait(&my_s);
+            printf("[CHILD 2] Waiting 10 Sedonds...\n");
+            sleep(10);
             exit(0);
         }
 
@@ -87,20 +94,22 @@ int main(int argc, char *argv[]) {
         // CHILD 3
         // ============================
         if (pid == 0 && i == 2) {
-            //printf("[CHILD 3] PID=%d, Parent=%d\n", getpid(), getppid());
+            sem_wait(&my_s);
+            printf("[CHILD 3] Waiting 10 Sedonds...\n");
+            sleep(10);
             exit(0);
-        }
-
+        } 
     }   // END - Fork Loop
 
     // ============================
     // PARENT: after all forks
     // ============================
-    printf("[PARENT] Waiting for children...\n";
+    printf("[PARENT] Waiting for children...\n");
     
     // Wait for all 3 children to finish
     for (int i = 0; i < 3; i++) {
         wait(NULL);
+        printf("[CHILD %d] Exiting.\n", i+1);
     }
 
     printf("[PARENT] Exiting...\n");
