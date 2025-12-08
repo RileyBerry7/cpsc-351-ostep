@@ -57,25 +57,60 @@ int main(int argc, char *argv[]) {
     printf("Hello world!\n");
     semaphore my_s = {10, {NULL}, 0};
     
-    pid_t pid = fork();
-    if (pid < 0) {
-        perror("fork");
-        exit(EXIT_FAILURE);
+    // Fork 3 Children
+    for (int i = 0; i < 3; i++) {
+        printf("[Child %d] Created\n", i+1);
+        pid_t pid = fork();
+        if (pid < 0) {
+            perror("fork");
+            exit(1);
+        }
 
-    } else if (pid == 0) {
-        // CHILD
-        printf("Child Process: \n");
-        sem_wait(&my_s);   // Hold resource
+        // ============================
+        // CHILD 1
+        // ============================
+        if (pid == 0 && i == 0) {
+            //printf("[CHILD 1] PID=%d, Parent=%d\n", getpid(), getppid());
+            //
+            exit(0);
+        }
+
+        // ============================
+        // CHILD 2
+        // ============================
+        if (pid == 0 && i == 1) {
+            //printf("[CHILD 2] PID=%d, Parent=%d\n", getpid(), getppid());
+            exit(0);
+        }
+
+        // ============================
+        // CHILD 3
+        // ============================
+        if (pid == 0 && i == 2) {
+            //printf("[CHILD 3] PID=%d, Parent=%d\n", getpid(), getppid());
+            exit(0);
+        }
+
+    }   // END - Fork Loop
+
+    // ============================
+    // PARENT: after all forks
+    // ============================
+    printf("[PARENT] Waiting for children...\n";
     
-    } else {
-        // PARENT
-        printf("ParentProcess: \n");
-        //sem_wait(&my_s); // Hold resource
-        //sem_post(&my_s); // Release resource
+    // Wait for all 3 children to finish
+    for (int i = 0; i < 3; i++) {
         wait(NULL);
     }
+
+    printf("[PARENT] Exiting...\n");
     return 0;
 }
+//_____________________________________________________________________________
+// END - Main
+
+
+
 
 //=============================================================================
 //                                  BLOCK
@@ -109,13 +144,15 @@ void block() {
 //------------------------------------------------------------------------------
 // Decrement Semaphore, possibly blocks.
 //  Parameters: 1. sem_t* s;
+//      
+//      Calling process holds 1 resource, or blocks if none are avaliable.
 //==============================================================================
 int sem_wait(semaphore* s) {
    
 
     printf("\t%d resources are avaliable.\n", s->value);
 
-    s->value--;
+    s->value--; // Remove 1 resource <- held in current process
     
     // If No Resources Are Available
     if (s->value <= 0) {
@@ -136,6 +173,7 @@ int sem_wait(semaphore* s) {
     } else {
         printf("\tProcess was served immediately\n");
     }
+    printf("\tCurrently holding 1 resource\n");
     return 0;
 }
 
