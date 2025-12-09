@@ -8,9 +8,14 @@
 #include <mqueue.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stddef.h> // NULL macro
-
-#define QUEUE_NAME "/my_queue"
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
+#include <errno.h>
 
 //==============================================================================
 // SEMAPHORES
@@ -26,113 +31,147 @@
 //           and -3 means that 3 processes are still waiting for a resource.
 
 //==============================================================================
-//                  MY SEMAPHORE IMPLEMENTATION
+//              CUSTOM SEMAPHORE IMPLEMENTATION
 //==============================================================================
 typedef struct {
-    int   value;     // Resources
-    pid_t list[100]; // Waiting processes
-    int   count;     // Length of waitlist
+    atomic_int  value;     // Resources
+    pid_t       list[100]; // Waiting processes
+    atomic_int  count;     // Length of waitlist
 
 } semaphore;
 
 //===================== FUNCTION PROTOTYPES ====================================
-void block();
-void wake_up();
-int  sem_wait(semaphore* s);
-int  sem_post(semaphore* s);
+void* thread_1(void* arg);
+void* thread_2(void* arg);
+void* thread_3(void* arg);
+void  block();
+void  wake_up();
+int   sem_wait(semaphore* s);
+int   sem_post(semaphore* s);
 
 //======================== CONFIGURATION =======================================
-#define RESOURCES 2
 
+#define QUEUE_NAME "/my_queue"
+#define RESOURCES     2
+#define WAITLIST_SIZE 100
+#define THREAD_COUNT  3
+
+struct mq_attr attr = {
+    .mq_flags   = 0,    // Blocking queue
+    .mq_maxmsg  = 1,    // Maximum number of messages in the queue
+    .mq_msgsize = 1,    // Maximum message size in bytes
+    .mq_curmsgs = 0     // Current number of messages (automatically set by OS, often ignored here)
+};
 
 //==============================================================================
 //                                      MAIN
 //==============================================================================
 int main(int argc, char *argv[]) {
     
-    // POSIX Message Queue Attributes
-    struct mq_attr attr;
-    attr.mq_flags   = 0;    // Blocking queue
-    attr.mq_maxmsg  = 1;    // Maximum number of messages in the queue
-    attr.mq_msgsize = 1;    // Maximum message size in bytes
-    attr.mq_curmsgs = 0;    // Current number of messages (set to 0 initially)
-    
     printf("Hello world!\n");
-    semaphore my_s = {RESOURCES, {NULL}, 0};
+   
+    mq_unlink(QUEUE_NAME);
+
+    // Create Semaphore
+    semaphore* my_s = malloc(sizeof(semaphore));
     
-    // Fork 3 Children
-    for (int i = 0; i < 3; i++) {
-        printf("[CHILD %d] Created\n", i+1);
-        pid_t pid = fork();
-        if (pid < 0) {
-            perror("fork");
-            exit(1);
-        }
-
-        // ============================
-        // CHILD 1
-        // ============================
-        if (pid == 0 && i == 0) {
-            //printf("[CHILD 1] PID=%d, Parent=%d\n", getpid(), getppid());
-            sem_wait(&my_s);
-            printf("[CHILD 1] Waiting 10 Sedonds...\n");
-            sleep(10);
-            exit(0);
-        }
-
-        // ============================
-        // CHILD 2
-        // ============================
-        if (pid == 0 && i == 1) {
-            sem_wait(&my_s);
-            printf("[CHILD 2] Waiting 10 Sedonds...\n");
-            sleep(10);
-            exit(0);
-        }
-
-        // ============================
-        // CHILD 3
-        // ============================
-        if (pid == 0 && i == 2) {
-            sem_wait(&my_s);
-            printf("[CHILD 3] Waiting 10 Sedonds...\n");
-            sleep(10);
-            exit(0);
-        } 
-    }   // END - Fork Loop
-
-    // ============================
-    // PARENT: after all forks
-    // ============================
-    printf("[PARENT] Waiting for children...\n");
+    // Initialize Semaphore
+    my_s->value = RESOURCES;
+    memset(my_s->list, 0, sizeof(my_s->list));
+    my_s->count = 0;
     
-    // Wait for all 3 children to finish
-    for (int i = 0; i < 3; i++) {
-        wait(NULL);
-        printf("[CHILD %d] Exiting.\n", i+1);
+    // Create Threads
+    pthread_t threads[THREAD_COUNT];
+    pthread_create(&threads[0], NULL, thread_1, my_s);
+    pthread_create(&threads[1], NULL, thread_2, my_s);
+    pthread_create(&threads[2], NULL, thread_3, my_s);
+
+    
+    // Wait for each thread to complete its work
+    for (int i = 0; i < THREAD_COUNT; i++) {
+        pthread_join(threads[i], NULL);
+        // The main thread pauses here until threads[i] finishes
     }
 
-    printf("[PARENT] Exiting...\n");
+    free(my_s);
+
+    printf("[MAIN] Exiting...\n");
     return 0;
 }
 //_____________________________________________________________________________
 // END - Main
 
 
+//=============================================================================
+//                                  THREAD 1
+//=============================================================================
+void* thread_1(void* arg) {
+    semaphore* my_s = arg; // create alias
 
+    printf("[THREAD 1] Created\n");
+    sem_wait(my_s);
+    
+    printf("[THREAD 1] Holding for 10 Seconds...\n");
+    sleep(10);
+    
+    printf("[THREAD 1] Releasing resource\n");
+    sem_post(my_s);
+
+    printf("[THREAD 1] Exiting\n");
+    pthread_exit(NULL);
+}
+
+
+//=============================================================================
+//                                  THREAD 2
+//=============================================================================
+void* thread_2(void* arg) {
+    semaphore* my_s = arg; // create alias
+
+    printf("[THREAD 2] Created\n");
+    sem_wait(my_s);
+    
+    printf("[THREAD 2] Holding for 10 Seconds...\n");
+    sleep(10);
+    
+    printf("[THREAD 2] Releasing resource\n");
+    sem_post(my_s);
+
+    printf("[THREAD 2] Exiting\n");
+    pthread_exit(NULL);
+}
+
+
+//=============================================================================
+//                                  THREAD 3
+//=============================================================================
+void* thread_3(void* arg) {
+    semaphore* my_s = arg; // create alias
+
+    printf("[THREAD 3] Created\n");
+    sem_wait(my_s);
+    
+    printf("[THREAD 3] Holding for 10 Seconds...\n");
+    sleep(10);
+    
+    printf("[THREAD 3] Releasing resource\n");
+    sem_post(my_s);
+
+    printf("[THREAD 3] Exiting\n");
+    pthread_exit(NULL);
+}
 
 //=============================================================================
 //                                  BLOCK
 //=============================================================================
 void block() {
-    extern struct mq_attr attr;
     
     bool   buffer;
     ssize_t bytes_read;
     mqd_t   mq;
 
     // Message Queue Open
-    mq = mq_open(QUEUE_NAME, O_RDONLY | O_CREAT); 
+    mq = mq_open(QUEUE_NAME, O_CREAT | O_RDONLY, 0666, &attr); 
     if (mq == (mqd_t)-1) {
         perror("mq_open for receiving");
         exit(EXIT_FAILURE);
@@ -144,7 +183,7 @@ void block() {
         perror("mq_receive");
         exit(EXIT_FAILURE);
     }
-    printf("Message received: %d\n", buffer);
+    printf("\tMessage received: %d\n", buffer);
     mq_close(mq);
 }
 
@@ -164,25 +203,25 @@ int sem_wait(semaphore* s) {
     s->value--; // Remove 1 resource <- held in current process
     
     // If No Resources Are Available
-    if (s->value <= 0) {
+    if (s->value < 0) {
         
         // Add Process to waitlist
         s->list[s->count];
         s->count++;
-        printf("Process added to waitlist\n");
+        printf("\tAdded to waitlist\n");
         
         // Block until a resource becomes available
-        printf("\tProcess blocking\n");
+        printf("\tBlocked\n");
         block();
-        printf("\tProcess woken up\n");
+        printf("\tWoken up\n");
 
         // Pop from the waitlist
         s->list[s->count] = NULL;
         s->count--;
     } else {
-        printf("\tProcess was served immediately\n");
+        printf("\tServed immediately\n");
     }
-    printf("\tCurrently holding 1 resource\n");
+    printf("\tHolding 1 resource\n");
     return 0;
 }
 
@@ -192,11 +231,10 @@ int sem_wait(semaphore* s) {
 //=============================================================================
 void wake_up() {
 
-    struct mq_attr attr;
     mqd_t   mq;
 
     // Message Queue Open / Create
-    mq = mq_open(QUEUE_NAME, O_CREAT | O_WRONLY, 0644, &attr);
+    mq = mq_open(QUEUE_NAME, O_CREAT | O_WRONLY, 0666, &attr);
     if (mq == (mqd_t)-1) {
         perror("mq_open");
         exit(EXIT_FAILURE);
@@ -208,7 +246,7 @@ void wake_up() {
         perror("mq_send");
         exit(EXIT_FAILURE);
     }
-    printf("Message sent: %d\n", message);
+    printf("\tMessage sent: %d\n", message);
     mq_close(mq);
 }   
 
@@ -222,10 +260,7 @@ int sem_post(semaphore* s) {
     s->value++;
 
     // If Waitinglist is full
-    if (s->value <= 0) {
-        // Pop a process from the waiting list
-        // p s->list[s->count]
-        // s->count--;
+    if (s->count > 0) {
         wake_up();
     }
 }
